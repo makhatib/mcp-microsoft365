@@ -9,6 +9,7 @@ import { logDebug } from './logger.js';
 import { config } from './config.js';
 
 const GRAPH_BASE_URL = 'https://graph.microsoft.com/v1.0';
+const GRAPH_BETA_URL = 'https://graph.microsoft.com/beta';
 
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
@@ -29,10 +30,11 @@ interface GraphErrorResponse {
 /**
  * Build URL with query parameters
  */
-function buildUrl(endpoint: string, params?: Record<string, string | number | boolean | undefined>): string {
+function buildUrl(endpoint: string, params?: Record<string, string | number | boolean | undefined>, useBeta = false): string {
   // Ensure endpoint starts with /
   const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-  const fullUrl = `${GRAPH_BASE_URL}${normalizedEndpoint}`;
+  const baseUrl = useBeta ? GRAPH_BETA_URL : GRAPH_BASE_URL;
+  const fullUrl = `${baseUrl}${normalizedEndpoint}`;
   const url = new URL(fullUrl);
   
   if (params) {
@@ -49,9 +51,9 @@ function buildUrl(endpoint: string, params?: Record<string, string | number | bo
 /**
  * Make a request to Microsoft Graph API
  */
-async function request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
+async function request<T>(endpoint: string, options: RequestOptions = {}, useBeta = false): Promise<T> {
   const { method = 'GET', body, params } = options;
-  const url = buildUrl(endpoint, params);
+  const url = buildUrl(endpoint, params, useBeta);
   const token = await getAccessToken();
 
   logDebug('Graph API request', { method, endpoint, params });
@@ -124,6 +126,13 @@ export const graphClient = {
   },
 
   /**
+   * GET request using beta API
+   */
+  async getBeta<T>(endpoint: string, params?: Record<string, string | number | boolean | undefined>): Promise<T> {
+    return request<T>(endpoint, { method: 'GET', params }, true);
+  },
+
+  /**
    * POST request
    */
   async post<T>(endpoint: string, body?: unknown, params?: Record<string, string | number | boolean | undefined>): Promise<T> {
@@ -156,6 +165,35 @@ export const graphClient = {
         'DOWNLOAD_FAILED'
       );
     }
+    return response.text();
+  },
+
+  /**
+   * GET request with custom Accept header (for non-JSON responses like VTT)
+   */
+  async getText(endpoint: string, accept: string = 'text/vtt'): Promise<string> {
+    const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+    const url = `${GRAPH_BASE_URL}${normalizedEndpoint}`;
+    const token = await getAccessToken();
+
+    logDebug('Graph API getText request', { endpoint, accept });
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Accept': accept,
+      },
+    });
+
+    if (!response.ok) {
+      throw new GraphApiError(
+        `Failed to get text content: ${response.statusText}`,
+        response.status,
+        'GET_TEXT_FAILED'
+      );
+    }
+
     return response.text();
   },
 

@@ -28,6 +28,33 @@ const teamsSendSchema = z.object({
   message: z.string(),
 });
 
+const meetingsListSchema = z.object({
+  user: z.string().optional(),
+  top: z.number().min(1).max(50).default(20),
+});
+
+const meetingTranscriptsSchema = z.object({
+  user: z.string().optional(),
+  meetingId: z.string(),
+});
+
+const meetingTranscriptContentSchema = z.object({
+  user: z.string().optional(),
+  meetingId: z.string(),
+  transcriptId: z.string(),
+});
+
+const callRecordsSchema = z.object({
+  fromDateTime: z.string().optional(),
+  toDateTime: z.string().optional(),
+  top: z.number().min(1).max(100).default(20),
+});
+
+const meetingByJoinUrlSchema = z.object({
+  user: z.string().optional(),
+  joinWebUrl: z.string(),
+});
+
 // === Tool Definitions ===
 
 export const teamsTools: Tool[] = [
@@ -66,6 +93,66 @@ export const teamsTools: Tool[] = [
         message: { type: 'string', description: 'Message content' },
       },
       required: ['chatId', 'message'],
+    },
+  },
+  {
+    name: 'm365_meetings_list',
+    description: 'List online meetings (Teams meetings)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        user: { type: 'string', description: 'User email' },
+        top: { type: 'number', description: 'Number of meetings', default: 20 },
+      },
+    },
+  },
+  {
+    name: 'm365_meeting_transcripts',
+    description: 'List available transcripts for a Teams meeting',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        user: { type: 'string', description: 'User email' },
+        meetingId: { type: 'string', description: 'Online meeting ID' },
+      },
+      required: ['meetingId'],
+    },
+  },
+  {
+    name: 'm365_meeting_transcript_content',
+    description: 'Get the transcript content (text) of a Teams meeting',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        user: { type: 'string', description: 'User email' },
+        meetingId: { type: 'string', description: 'Online meeting ID' },
+        transcriptId: { type: 'string', description: 'Transcript ID' },
+      },
+      required: ['meetingId', 'transcriptId'],
+    },
+  },
+  {
+    name: 'm365_call_records',
+    description: 'List call records (Teams meetings and calls). Requires CallRecords.Read.All permission.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        fromDateTime: { type: 'string', description: 'Filter calls from this datetime (ISO format)' },
+        toDateTime: { type: 'string', description: 'Filter calls to this datetime (ISO format)' },
+        top: { type: 'number', description: 'Number of records', default: 20 },
+      },
+    },
+  },
+  {
+    name: 'm365_meeting_by_join_url',
+    description: 'Get online meeting details by JoinWebUrl. Use this to find the meeting ID for transcript access.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        user: { type: 'string', description: 'User email' },
+        joinWebUrl: { type: 'string', description: 'Teams meeting JoinWebUrl' },
+      },
+      required: ['joinWebUrl'],
     },
   },
 ];
@@ -137,10 +224,213 @@ async function teamsSend(args: Record<string, unknown>): Promise<string> {
   return JSON.stringify({ success: true, id: response.id });
 }
 
+// Meeting types
+interface OnlineMeeting {
+  id: string;
+  subject: string;
+  startDateTime: string;
+  endDateTime: string;
+  joinWebUrl: string;
+  participants?: {
+    organizer?: { identity?: { user?: { displayName: string } } };
+    attendees?: Array<{ identity?: { user?: { displayName: string } } }>;
+  };
+}
+
+interface Transcript {
+  id: string;
+  createdDateTime: string;
+  meetingId: string;
+  meetingOrganizerId: string;
+}
+
+async function meetingsList(args: Record<string, unknown>): Promise<string> {
+  const start = Date.now();
+  const input = meetingsListSchema.parse(args);
+  const user = input.user || graphClient.getDefaultUser();
+  
+  logToolCall('m365_meetings_list', { top: input.top });
+
+  // Try beta API for better support of Teams meetings
+  const response = await graphClient.getBeta<GraphListResponse<OnlineMeeting>>(
+    `/users/${user}/onlineMeetings`,
+    { $top: input.top }
+  );
+
+  const result = response.value.map(m => ({
+    id: m.id,
+    subject: m.subject,
+    start: m.startDateTime,
+    end: m.endDateTime,
+    joinUrl: m.joinWebUrl,
+    organizer: m.participants?.organizer?.identity?.user?.displayName,
+  }));
+
+  logToolResult('m365_meetings_list', true, Date.now() - start);
+  return JSON.stringify(result, null, 2);
+}
+
+async function meetingTranscripts(args: Record<string, unknown>): Promise<string> {
+  const start = Date.now();
+  const input = meetingTranscriptsSchema.parse(args);
+  const user = input.user || graphClient.getDefaultUser();
+  
+  logToolCall('m365_meeting_transcripts', { meetingId: input.meetingId });
+
+  // Requires OnlineMeetingTranscript.Read.All for app-only auth
+  const response = await graphClient.get<GraphListResponse<Transcript>>(
+    `/users/${user}/onlineMeetings/${input.meetingId}/transcripts`
+  );
+
+  const result = response.value.map(t => ({
+    id: t.id,
+    created: t.createdDateTime,
+    meetingId: t.meetingId,
+  }));
+
+  logToolResult('m365_meeting_transcripts', true, Date.now() - start);
+  return JSON.stringify(result, null, 2);
+}
+
+async function meetingTranscriptContent(args: Record<string, unknown>): Promise<string> {
+  const start = Date.now();
+  const input = meetingTranscriptContentSchema.parse(args);
+  const user = input.user || graphClient.getDefaultUser();
+  
+  logToolCall('m365_meeting_transcript_content', { meetingId: input.meetingId, transcriptId: input.transcriptId });
+
+  // Get transcript content as VTT format
+  // Requires OnlineMeetingTranscript.Read.All for app-only auth
+  const response = await graphClient.getText(
+    `/users/${user}/onlineMeetings/${input.meetingId}/transcripts/${input.transcriptId}/content`,
+    'text/vtt'
+  );
+
+  logToolResult('m365_meeting_transcript_content', true, Date.now() - start);
+  
+  // Parse VTT to extract just the text
+  const lines = response.split('\n');
+  const textOnly: string[] = [];
+  
+  for (const line of lines) {
+    // Skip WEBVTT header, timestamps, and empty lines
+    if (line.startsWith('WEBVTT') || line.match(/^\d{2}:\d{2}/) || line.trim() === '') {
+      continue;
+    }
+    // Extract speaker and text from <v Speaker>text</v> format
+    const match = line.match(/<v ([^>]+)>(.+)<\/v>/);
+    if (match) {
+      textOnly.push(`${match[1]}: ${match[2]}`);
+    } else if (line.trim()) {
+      textOnly.push(line.trim());
+    }
+  }
+
+  return JSON.stringify({
+    raw: response,
+    text: textOnly.join('\n'),
+  }, null, 2);
+}
+
+// === Call Records ===
+
+interface CallRecord {
+  id: string;
+  type: string;
+  modalities: string[];
+  startDateTime: string;
+  endDateTime: string;
+  joinWebUrl?: string;
+  organizer?: {
+    user?: {
+      id: string;
+      displayName: string;
+    };
+  };
+}
+
+async function callRecords(args: Record<string, unknown>): Promise<string> {
+  const start = Date.now();
+  const input = callRecordsSchema.parse(args);
+  
+  logToolCall('m365_call_records', { fromDateTime: input.fromDateTime, toDateTime: input.toDateTime });
+
+  const params: Record<string, string | number | boolean | undefined> = {};
+  
+  // Build filter if dates provided (required for call records API)
+  const filters: string[] = [];
+  if (input.fromDateTime) {
+    filters.push(`startDateTime ge ${input.fromDateTime}`);
+  }
+  if (input.toDateTime) {
+    filters.push(`startDateTime le ${input.toDateTime}`);
+  }
+  if (filters.length > 0) {
+    params.$filter = filters.join(' and ');
+  }
+
+  const response = await graphClient.get<GraphListResponse<CallRecord>>(
+    `/communications/callRecords`,
+    params
+  );
+
+  const result = response.value.map(r => ({
+    id: r.id,
+    type: r.type,
+    modalities: r.modalities,
+    start: r.startDateTime,
+    end: r.endDateTime,
+    joinWebUrl: r.joinWebUrl,
+    organizer: r.organizer?.user?.displayName,
+  }));
+
+  logToolResult('m365_call_records', true, Date.now() - start);
+  return JSON.stringify(result, null, 2);
+}
+
+// === Meeting by JoinWebUrl ===
+
+async function meetingByJoinUrl(args: Record<string, unknown>): Promise<string> {
+  const start = Date.now();
+  const input = meetingByJoinUrlSchema.parse(args);
+  const user = input.user || graphClient.getDefaultUser();
+  
+  logToolCall('m365_meeting_by_join_url', { joinWebUrl: input.joinWebUrl.substring(0, 50) + '...' });
+
+  // Use filter to find meeting by JoinWebUrl
+  const response = await graphClient.get<GraphListResponse<OnlineMeeting>>(
+    `/users/${user}/onlineMeetings`,
+    { $filter: `JoinWebUrl eq '${input.joinWebUrl}'` }
+  );
+
+  if (response.value.length === 0) {
+    return JSON.stringify({ error: 'Meeting not found with the provided JoinWebUrl' });
+  }
+
+  const meeting = response.value[0];
+  const result = {
+    id: meeting.id,
+    subject: meeting.subject,
+    start: meeting.startDateTime,
+    end: meeting.endDateTime,
+    joinUrl: meeting.joinWebUrl,
+    organizer: meeting.participants?.organizer?.identity?.user?.displayName,
+  };
+
+  logToolResult('m365_meeting_by_join_url', true, Date.now() - start);
+  return JSON.stringify(result, null, 2);
+}
+
 // === Export ===
 
 export const teamsHandlers: Record<string, ToolHandler> = {
   'm365_teams_chats': teamsChats,
   'm365_teams_messages': teamsMessages,
   'm365_teams_send': teamsSend,
+  'm365_meetings_list': meetingsList,
+  'm365_meeting_transcripts': meetingTranscripts,
+  'm365_meeting_transcript_content': meetingTranscriptContent,
+  'm365_call_records': callRecords,
+  'm365_meeting_by_join_url': meetingByJoinUrl,
 };
+
