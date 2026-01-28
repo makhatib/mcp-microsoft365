@@ -154,6 +154,37 @@ export const graphClient = {
   },
 
   /**
+   * Upload file (PUT with binary content)
+   */
+  async upload<T>(endpoint: string, content: Buffer): Promise<T> {
+    const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+    const url = `${GRAPH_BASE_URL}${normalizedEndpoint}`;
+    const token = await getAccessToken();
+
+    logDebug('Graph API upload request', { endpoint });
+
+    const response = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/octet-stream',
+      },
+      body: content,
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new GraphApiError(
+        `Upload failed: ${text}`,
+        response.status,
+        'UPLOAD_FAILED'
+      );
+    }
+
+    return response.json() as Promise<T>;
+  },
+
+  /**
    * Download file content
    */
   async download(downloadUrl: string): Promise<string> {

@@ -2,6 +2,7 @@
  * OneDrive Files Tools
  */
 
+import { readFileSync } from 'fs';
 import { z } from 'zod';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { graphClient } from '../core/graph-client.js';
@@ -36,6 +37,19 @@ const filesSearchSchema = z.object({
 const filesDeleteSchema = z.object({
   user: z.string().optional(),
   itemId: z.string(),
+});
+
+const filesUploadSchema = z.object({
+  user: z.string().optional(),
+  localPath: z.string(),
+  remotePath: z.string(),
+});
+
+const filesShareSchema = z.object({
+  user: z.string().optional(),
+  itemId: z.string(),
+  type: z.enum(['view', 'edit']).default('view'),
+  scope: z.enum(['anonymous', 'organization']).default('anonymous'),
 });
 
 // === Tool Definitions ===
@@ -98,6 +112,33 @@ export const filesTools: Tool[] = [
       properties: {
         user: { type: 'string', description: 'User email' },
         itemId: { type: 'string', description: 'Item ID to delete' },
+      },
+      required: ['itemId'],
+    },
+  },
+  {
+    name: 'm365_files_upload',
+    description: 'Upload a file to OneDrive',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        user: { type: 'string', description: 'User email' },
+        localPath: { type: 'string', description: 'Local file path on server' },
+        remotePath: { type: 'string', description: 'Destination path in OneDrive (e.g., "Documents/file.docx")' },
+      },
+      required: ['localPath', 'remotePath'],
+    },
+  },
+  {
+    name: 'm365_files_share',
+    description: 'Create a sharing link for a file',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        user: { type: 'string', description: 'User email' },
+        itemId: { type: 'string', description: 'File item ID' },
+        type: { type: 'string', enum: ['view', 'edit'], description: 'Link type: view or edit', default: 'view' },
+        scope: { type: 'string', enum: ['anonymous', 'organization'], description: 'Who can use the link', default: 'anonymous' },
       },
       required: ['itemId'],
     },
@@ -213,6 +254,54 @@ async function filesDelete(args: Record<string, unknown>): Promise<string> {
   return JSON.stringify({ success: true, message: 'File deleted' });
 }
 
+async function filesUpload(args: Record<string, unknown>): Promise<string> {
+  const start = Date.now();
+  const input = filesUploadSchema.parse(args);
+  const user = input.user || graphClient.getDefaultUser();
+
+  logToolCall('m365_files_upload', { localPath: input.localPath, remotePath: input.remotePath });
+
+  // Read file
+  const fileContent = readFileSync(input.localPath);
+  
+  // Upload using PUT (simple upload for files < 4MB)
+  const endpoint = `/users/${user}/drive/root:/${input.remotePath}:/content`;
+  const item = await graphClient.upload<DriveItem>(endpoint, fileContent);
+
+  logToolResult('m365_files_upload', true, Date.now() - start);
+  return JSON.stringify({
+    success: true,
+    id: item.id,
+    name: item.name,
+    webUrl: item.webUrl,
+    size: item.size,
+  }, null, 2);
+}
+
+async function filesShare(args: Record<string, unknown>): Promise<string> {
+  const start = Date.now();
+  const input = filesShareSchema.parse(args);
+  const user = input.user || graphClient.getDefaultUser();
+
+  logToolCall('m365_files_share', { itemId: input.itemId, type: input.type });
+
+  const response = await graphClient.post<{ link: { webUrl: string; type: string; scope: string } }>(
+    `/users/${user}/drive/items/${input.itemId}/createLink`,
+    {
+      type: input.type,
+      scope: input.scope,
+    }
+  );
+
+  logToolResult('m365_files_share', true, Date.now() - start);
+  return JSON.stringify({
+    success: true,
+    shareUrl: response.link.webUrl,
+    type: response.link.type,
+    scope: response.link.scope,
+  }, null, 2);
+}
+
 // === Export ===
 
 export const filesHandlers: Record<string, ToolHandler> = {
@@ -221,4 +310,6 @@ export const filesHandlers: Record<string, ToolHandler> = {
   'm365_files_read': filesRead,
   'm365_files_search': filesSearch,
   'm365_files_delete': filesDelete,
+  'm365_files_upload': filesUpload,
+  'm365_files_share': filesShare,
 };
