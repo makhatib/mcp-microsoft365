@@ -12,6 +12,7 @@ import { filesTools, filesHandlers } from './files.js';
 import { tasksTools, tasksHandlers } from './tasks.js';
 import { teamsTools, teamsHandlers } from './teams.js';
 import { usersTools, usersHandlers } from './users.js';
+import { contactsTools, contactsHandlers } from './contacts.js';
 
 // Combine all tools
 export const allTools: Tool[] = [
@@ -21,6 +22,7 @@ export const allTools: Tool[] = [
   ...tasksTools,
   ...teamsTools,
   ...usersTools,
+  ...contactsTools,
 ];
 
 // Combine all handlers
@@ -31,6 +33,7 @@ export const allHandlers: Record<string, ToolHandler> = {
   ...tasksHandlers,
   ...teamsHandlers,
   ...usersHandlers,
+  ...contactsHandlers,
 };
 
 // Get handler by tool name

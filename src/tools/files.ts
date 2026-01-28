@@ -52,6 +52,26 @@ const filesShareSchema = z.object({
   scope: z.enum(['anonymous', 'organization']).default('anonymous'),
 });
 
+const filesCreateFolderSchema = z.object({
+  user: z.string().optional(),
+  parentPath: z.string().default(''),
+  name: z.string(),
+});
+
+const filesMoveSchema = z.object({
+  user: z.string().optional(),
+  itemId: z.string(),
+  destinationPath: z.string(),
+  newName: z.string().optional(),
+});
+
+const filesCopySchema = z.object({
+  user: z.string().optional(),
+  itemId: z.string(),
+  destinationPath: z.string(),
+  newName: z.string().optional(),
+});
+
 // === Tool Definitions ===
 
 export const filesTools: Tool[] = [
@@ -141,6 +161,47 @@ export const filesTools: Tool[] = [
         scope: { type: 'string', enum: ['anonymous', 'organization'], description: 'Who can use the link', default: 'anonymous' },
       },
       required: ['itemId'],
+    },
+  },
+  {
+    name: 'm365_files_create_folder',
+    description: 'Create a new folder in OneDrive',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        user: { type: 'string', description: 'User email' },
+        parentPath: { type: 'string', description: 'Parent folder path (empty for root)', default: '' },
+        name: { type: 'string', description: 'New folder name' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'm365_files_move',
+    description: 'Move a file or folder to a different location',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        user: { type: 'string', description: 'User email' },
+        itemId: { type: 'string', description: 'Item ID to move' },
+        destinationPath: { type: 'string', description: 'Destination folder path (e.g., "Documents/Archive")' },
+        newName: { type: 'string', description: 'Optional new name for the item' },
+      },
+      required: ['itemId', 'destinationPath'],
+    },
+  },
+  {
+    name: 'm365_files_copy',
+    description: 'Copy a file or folder to another location',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        user: { type: 'string', description: 'User email' },
+        itemId: { type: 'string', description: 'Item ID to copy' },
+        destinationPath: { type: 'string', description: 'Destination folder path (e.g., "Documents/Backup")' },
+        newName: { type: 'string', description: 'Optional new name for the copy' },
+      },
+      required: ['itemId', 'destinationPath'],
     },
   },
 ];
@@ -302,6 +363,106 @@ async function filesShare(args: Record<string, unknown>): Promise<string> {
   }, null, 2);
 }
 
+async function filesCreateFolder(args: Record<string, unknown>): Promise<string> {
+  const start = Date.now();
+  const input = filesCreateFolderSchema.parse(args);
+  const user = input.user || graphClient.getDefaultUser();
+
+  logToolCall('m365_files_create_folder', { parentPath: input.parentPath, name: input.name });
+
+  const pathPart = input.parentPath ? `:/${input.parentPath}:` : '';
+  const item = await graphClient.post<DriveItem>(
+    `/users/${user}/drive/root${pathPart}/children`,
+    {
+      name: input.name,
+      folder: {},
+      '@microsoft.graph.conflictBehavior': 'rename',
+    }
+  );
+
+  logToolResult('m365_files_create_folder', true, Date.now() - start);
+  return JSON.stringify({
+    success: true,
+    id: item.id,
+    name: item.name,
+    webUrl: item.webUrl,
+  }, null, 2);
+}
+
+async function filesMove(args: Record<string, unknown>): Promise<string> {
+  const start = Date.now();
+  const input = filesMoveSchema.parse(args);
+  const user = input.user || graphClient.getDefaultUser();
+
+  logToolCall('m365_files_move', { itemId: input.itemId, destinationPath: input.destinationPath });
+
+  // First, get the destination folder ID
+  const destPathPart = input.destinationPath ? `:/${input.destinationPath}:` : '';
+  const destFolder = await graphClient.get<DriveItem>(
+    `/users/${user}/drive/root${destPathPart}`
+  );
+
+  const updateBody: Record<string, unknown> = {
+    parentReference: { id: destFolder.id },
+  };
+  if (input.newName) {
+    updateBody.name = input.newName;
+  }
+
+  const item = await graphClient.patch<DriveItem>(
+    `/users/${user}/drive/items/${input.itemId}`,
+    updateBody
+  );
+
+  logToolResult('m365_files_move', true, Date.now() - start);
+  return JSON.stringify({
+    success: true,
+    id: item.id,
+    name: item.name,
+    webUrl: item.webUrl,
+  }, null, 2);
+}
+
+async function filesCopy(args: Record<string, unknown>): Promise<string> {
+  const start = Date.now();
+  const input = filesCopySchema.parse(args);
+  const user = input.user || graphClient.getDefaultUser();
+
+  logToolCall('m365_files_copy', { itemId: input.itemId, destinationPath: input.destinationPath });
+
+  // Get the destination folder
+  const destPathPart = input.destinationPath ? `:/${input.destinationPath}:` : '';
+  const destFolder = await graphClient.get<DriveItem>(
+    `/users/${user}/drive/root${destPathPart}`
+  );
+
+  // Get drive ID from the destination
+  const driveIdMatch = destFolder.parentReference?.path?.match(/\/drives\/([^\/]+)/);
+  const driveId = driveIdMatch ? driveIdMatch[1] : undefined;
+
+  const copyBody: Record<string, unknown> = {
+    parentReference: { 
+      id: destFolder.id,
+      ...(driveId && { driveId }),
+    },
+  };
+  if (input.newName) {
+    copyBody.name = input.newName;
+  }
+
+  // Copy returns 202 Accepted with a Location header for status
+  await graphClient.post(
+    `/users/${user}/drive/items/${input.itemId}/copy`,
+    copyBody
+  );
+
+  logToolResult('m365_files_copy', true, Date.now() - start);
+  return JSON.stringify({
+    success: true,
+    message: 'Copy initiated. The operation may take a moment to complete.',
+  }, null, 2);
+}
+
 // === Export ===
 
 export const filesHandlers: Record<string, ToolHandler> = {
@@ -312,4 +473,7 @@ export const filesHandlers: Record<string, ToolHandler> = {
   'm365_files_delete': filesDelete,
   'm365_files_upload': filesUpload,
   'm365_files_share': filesShare,
+  'm365_files_create_folder': filesCreateFolder,
+  'm365_files_move': filesMove,
+  'm365_files_copy': filesCopy,
 };

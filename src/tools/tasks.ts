@@ -52,6 +52,11 @@ const tasksDeleteSchema = z.object({
   taskId: z.string(),
 });
 
+const tasksCreateListSchema = z.object({
+  user: z.string().optional(),
+  displayName: z.string(),
+});
+
 // === Tool Definitions ===
 
 export const tasksTools: Tool[] = [
@@ -135,6 +140,18 @@ export const tasksTools: Tool[] = [
         taskId: { type: 'string', description: 'Task ID' },
       },
       required: ['listId', 'taskId'],
+    },
+  },
+  {
+    name: 'm365_tasks_create_list',
+    description: 'Create a new task list',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        user: { type: 'string', description: 'User email' },
+        displayName: { type: 'string', description: 'Name for the new task list' },
+      },
+      required: ['displayName'],
     },
   },
 ];
@@ -282,6 +299,26 @@ async function tasksDelete(args: Record<string, unknown>): Promise<string> {
   return JSON.stringify({ success: true, message: 'Task deleted' });
 }
 
+async function tasksCreateList(args: Record<string, unknown>): Promise<string> {
+  const start = Date.now();
+  const input = tasksCreateListSchema.parse(args);
+  const user = input.user || graphClient.getDefaultUser();
+
+  logToolCall('m365_tasks_create_list', { displayName: input.displayName });
+
+  const created = await graphClient.post<TaskList>(
+    `/users/${user}/todo/lists`,
+    { displayName: input.displayName }
+  );
+
+  logToolResult('m365_tasks_create_list', true, Date.now() - start);
+  return JSON.stringify({
+    success: true,
+    id: created.id,
+    displayName: created.displayName,
+  }, null, 2);
+}
+
 // === Export ===
 
 export const tasksHandlers: Record<string, ToolHandler> = {
@@ -291,4 +328,5 @@ export const tasksHandlers: Record<string, ToolHandler> = {
   'm365_tasks_update': tasksUpdate,
   'm365_tasks_complete': tasksComplete,
   'm365_tasks_delete': tasksDelete,
+  'm365_tasks_create_list': tasksCreateList,
 };

@@ -12,34 +12,68 @@ An MCP (Model Context Protocol) server for Microsoft 365 integration. Built with
 - `m365_mail_list` - List emails from inbox/folders
 - `m365_mail_read` - Read specific email
 - `m365_mail_send` - Send emails (HTML supported)
+- `m365_mail_reply` - Reply to an email
+- `m365_mail_forward` - Forward an email
+- `m365_mail_move` - Move email to folder
+- `m365_mail_flag` - Flag/unflag for follow-up
+- `m365_mail_mark_read` - Mark as read/unread
+- `m365_mail_folders` - List mail folders
+- `m365_mail_create_draft` - Create draft email
 - `m365_mail_search` - Search emails
 - `m365_mail_delete` - Delete emails
+- `m365_mail_attachments_list` - List email attachments
+- `m365_mail_attachment_get` - Get attachment content
 
 ### 📅 Calendar
 - `m365_calendar_list` - List events
 - `m365_calendar_get` - Get event details
 - `m365_calendar_create` - Create events (Teams meeting support)
+- `m365_calendar_update` - Update events
+- `m365_calendar_respond` - Accept/decline invitations
 - `m365_calendar_delete` - Delete events
 - `m365_calendar_availability` - Check free/busy status
+- `m365_calendar_find_meeting_times` - Find available meeting slots
 
 ### 📁 OneDrive
 - `m365_files_list` - List files/folders
 - `m365_files_get` - Get file metadata
 - `m365_files_read` - Read file content
 - `m365_files_search` - Search files
+- `m365_files_upload` - Upload files
 - `m365_files_delete` - Delete files
+- `m365_files_share` - Create sharing link
+- `m365_files_create_folder` - Create new folder
+- `m365_files_move` - Move file/folder
+- `m365_files_copy` - Copy file/folder
 
 ### ✅ Tasks (To-Do)
 - `m365_tasks_lists` - List task lists
 - `m365_tasks_list` - List tasks
 - `m365_tasks_create` - Create tasks
+- `m365_tasks_update` - Update tasks
 - `m365_tasks_complete` - Mark task complete
 - `m365_tasks_delete` - Delete tasks
+- `m365_tasks_create_list` - Create new task list
 
 ### 💬 Teams
 - `m365_teams_chats` - List chats
-- `m365_teams_messages` - Read messages
+- `m365_teams_messages` - Read chat messages
 - `m365_teams_send` - Send messages
+- `m365_teams_create_chat` - Create new chat
+- `m365_teams_create_online_meeting` - Create Teams meeting
+- `m365_meetings_list` - List online meetings
+- `m365_meeting_transcripts` - List meeting transcripts
+- `m365_meeting_transcript_content` - Get transcript content
+- `m365_call_records` - List call records
+- `m365_meeting_by_join_url` - Find meeting by URL
+
+### 📇 Contacts
+- `m365_contacts_list` - List contacts
+- `m365_contacts_get` - Get contact details
+- `m365_contacts_create` - Create contact
+- `m365_contacts_update` - Update contact
+- `m365_contacts_search` - Search contacts
+- `m365_contacts_delete` - Delete contact
 
 ### 👥 Users
 - `m365_users_list` - List organization users
@@ -60,7 +94,10 @@ Create an app in [Azure Portal](https://portal.azure.com):
    - `Sites.Read.All`
    - `Tasks.Read.All`, `Tasks.ReadWrite.All`
    - `Chat.Read.All`, `Chat.ReadWrite.All`
+   - `Contacts.Read`, `Contacts.ReadWrite`
    - `User.Read.All`
+   - `OnlineMeetings.Read.All`, `OnlineMeetings.ReadWrite.All` (for Teams meetings)
+   - `OnlineMeetingTranscript.Read.All` (for transcripts)
 3. **Grant admin consent** for your organization
 
 ### 2. Installation

@@ -87,6 +87,17 @@ const mailDeleteSchema = z.object({
   messageId: z.string(),
 });
 
+const mailAttachmentsListSchema = z.object({
+  user: z.string().optional(),
+  messageId: z.string(),
+});
+
+const mailAttachmentGetSchema = z.object({
+  user: z.string().optional(),
+  messageId: z.string(),
+  attachmentId: z.string(),
+});
+
 // === Tool Definitions ===
 
 export const mailTools: Tool[] = [
@@ -246,6 +257,31 @@ export const mailTools: Tool[] = [
         messageId: { type: 'string', description: 'Message ID to delete' },
       },
       required: ['messageId'],
+    },
+  },
+  {
+    name: 'm365_mail_attachments_list',
+    description: 'List attachments for an email',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        user: { type: 'string', description: 'User email' },
+        messageId: { type: 'string', description: 'Message ID' },
+      },
+      required: ['messageId'],
+    },
+  },
+  {
+    name: 'm365_mail_attachment_get',
+    description: 'Get attachment details and content (base64 for files)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        user: { type: 'string', description: 'User email' },
+        messageId: { type: 'string', description: 'Message ID' },
+        attachmentId: { type: 'string', description: 'Attachment ID' },
+      },
+      required: ['messageId', 'attachmentId'],
     },
   },
 ];
@@ -530,6 +566,72 @@ async function mailDelete(args: Record<string, unknown>): Promise<string> {
   return JSON.stringify({ success: true, message: 'Email deleted' });
 }
 
+interface Attachment {
+  id: string;
+  name: string;
+  contentType: string;
+  size: number;
+  isInline: boolean;
+  contentBytes?: string;
+}
+
+async function mailAttachmentsList(args: Record<string, unknown>): Promise<string> {
+  const start = Date.now();
+  const input = mailAttachmentsListSchema.parse(args);
+  const user = input.user || graphClient.getDefaultUser();
+
+  logToolCall('m365_mail_attachments_list', { messageId: input.messageId });
+
+  const response = await graphClient.get<GraphListResponse<Attachment>>(
+    `/users/${user}/messages/${input.messageId}/attachments`,
+    { $select: 'id,name,contentType,size,isInline' }
+  );
+
+  const result = response.value.map(a => ({
+    id: a.id,
+    name: a.name,
+    contentType: a.contentType,
+    size: a.size,
+    isInline: a.isInline,
+  }));
+
+  logToolResult('m365_mail_attachments_list', true, Date.now() - start);
+  return JSON.stringify(result, null, 2);
+}
+
+async function mailAttachmentGet(args: Record<string, unknown>): Promise<string> {
+  const start = Date.now();
+  const input = mailAttachmentGetSchema.parse(args);
+  const user = input.user || graphClient.getDefaultUser();
+
+  logToolCall('m365_mail_attachment_get', { messageId: input.messageId, attachmentId: input.attachmentId });
+
+  const attachment = await graphClient.get<Attachment>(
+    `/users/${user}/messages/${input.messageId}/attachments/${input.attachmentId}`
+  );
+
+  // Limit content size for large attachments
+  const result: Record<string, unknown> = {
+    id: attachment.id,
+    name: attachment.name,
+    contentType: attachment.contentType,
+    size: attachment.size,
+  };
+  
+  if (attachment.contentBytes) {
+    // Include base64 content but truncate if very large (>1MB)
+    if (attachment.contentBytes.length > 1_400_000) {
+      result.contentBytes = attachment.contentBytes.substring(0, 1_400_000);
+      result.truncated = true;
+    } else {
+      result.contentBytes = attachment.contentBytes;
+    }
+  }
+
+  logToolResult('m365_mail_attachment_get', true, Date.now() - start);
+  return JSON.stringify(result, null, 2);
+}
+
 // === Export ===
 
 export const mailHandlers: Record<string, ToolHandler> = {
@@ -545,4 +647,6 @@ export const mailHandlers: Record<string, ToolHandler> = {
   'm365_mail_create_draft': mailCreateDraft,
   'm365_mail_search': mailSearch,
   'm365_mail_delete': mailDelete,
+  'm365_mail_attachments_list': mailAttachmentsList,
+  'm365_mail_attachment_get': mailAttachmentGet,
 };
