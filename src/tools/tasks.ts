@@ -30,6 +30,16 @@ const tasksCreateSchema = z.object({
   importance: z.enum(['low', 'normal', 'high']).default('normal'),
 });
 
+const tasksUpdateSchema = z.object({
+  user: z.string().optional(),
+  listId: z.string(),
+  taskId: z.string(),
+  title: z.string().optional(),
+  body: z.string().optional(),
+  dueDateTime: z.string().optional(),
+  importance: z.enum(['low', 'normal', 'high']).optional(),
+});
+
 const tasksCompleteSchema = z.object({
   user: z.string().optional(),
   listId: z.string(),
@@ -82,6 +92,23 @@ export const tasksTools: Tool[] = [
         importance: { type: 'string', description: 'low, normal, or high', default: 'normal' },
       },
       required: ['listId', 'title'],
+    },
+  },
+  {
+    name: 'm365_tasks_update',
+    description: 'Update an existing task (title, body, due date, importance)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        user: { type: 'string', description: 'User email' },
+        listId: { type: 'string', description: 'Task list ID' },
+        taskId: { type: 'string', description: 'Task ID' },
+        title: { type: 'string', description: 'New task title' },
+        body: { type: 'string', description: 'New task description' },
+        dueDateTime: { type: 'string', description: 'New due date (ISO format)' },
+        importance: { type: 'string', enum: ['low', 'normal', 'high'], description: 'Task importance' },
+      },
+      required: ['listId', 'taskId'],
     },
   },
   {
@@ -193,6 +220,31 @@ async function tasksCreate(args: Record<string, unknown>): Promise<string> {
   }, null, 2);
 }
 
+async function tasksUpdate(args: Record<string, unknown>): Promise<string> {
+  const start = Date.now();
+  const input = tasksUpdateSchema.parse(args);
+  const user = input.user || graphClient.getDefaultUser();
+
+  logToolCall('m365_tasks_update', { taskId: input.taskId });
+
+  const listId = encodeURIComponent(input.listId);
+  const taskId = encodeURIComponent(input.taskId);
+
+  const updates: Record<string, unknown> = {};
+  if (input.title) updates.title = input.title;
+  if (input.body) updates.body = { contentType: 'text', content: input.body };
+  if (input.dueDateTime) updates.dueDateTime = { dateTime: input.dueDateTime, timeZone: 'UTC' };
+  if (input.importance) updates.importance = input.importance;
+
+  await graphClient.patch(
+    `/users/${user}/todo/lists/${listId}/tasks/${taskId}`,
+    updates
+  );
+
+  logToolResult('m365_tasks_update', true, Date.now() - start);
+  return JSON.stringify({ success: true, message: 'Task updated' });
+}
+
 async function tasksComplete(args: Record<string, unknown>): Promise<string> {
   const start = Date.now();
   const input = tasksCompleteSchema.parse(args);
@@ -236,6 +288,7 @@ export const tasksHandlers: Record<string, ToolHandler> = {
   'm365_tasks_lists': tasksLists,
   'm365_tasks_list': tasksList,
   'm365_tasks_create': tasksCreate,
+  'm365_tasks_update': tasksUpdate,
   'm365_tasks_complete': tasksComplete,
   'm365_tasks_delete': tasksDelete,
 };

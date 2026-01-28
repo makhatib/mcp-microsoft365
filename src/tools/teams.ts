@@ -55,6 +55,21 @@ const meetingByJoinUrlSchema = z.object({
   joinWebUrl: z.string(),
 });
 
+const teamsCreateChatSchema = z.object({
+  user: z.string().optional(),
+  members: z.string(),
+  topic: z.string().optional(),
+  message: z.string().optional(),
+});
+
+const teamsCreateOnlineMeetingSchema = z.object({
+  user: z.string().optional(),
+  subject: z.string(),
+  startDateTime: z.string(),
+  endDateTime: z.string(),
+  participants: z.string().optional(),
+});
+
 // === Tool Definitions ===
 
 export const teamsTools: Tool[] = [
@@ -93,6 +108,35 @@ export const teamsTools: Tool[] = [
         message: { type: 'string', description: 'Message content' },
       },
       required: ['chatId', 'message'],
+    },
+  },
+  {
+    name: 'm365_teams_create_chat',
+    description: 'Create a new Teams chat (1:1 or group)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        user: { type: 'string', description: 'User email' },
+        members: { type: 'string', description: 'Member emails, comma-separated (include yourself for group chats)' },
+        topic: { type: 'string', description: 'Chat topic (for group chats)' },
+        message: { type: 'string', description: 'Optional first message to send' },
+      },
+      required: ['members'],
+    },
+  },
+  {
+    name: 'm365_teams_create_online_meeting',
+    description: 'Create a Teams online meeting (standalone, not linked to calendar)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        user: { type: 'string', description: 'User email (organizer)' },
+        subject: { type: 'string', description: 'Meeting subject' },
+        startDateTime: { type: 'string', description: 'Start datetime (ISO format)' },
+        endDateTime: { type: 'string', description: 'End datetime (ISO format)' },
+        participants: { type: 'string', description: 'Participant emails, comma-separated' },
+      },
+      required: ['subject', 'startDateTime', 'endDateTime'],
     },
   },
   {
@@ -421,12 +465,111 @@ async function meetingByJoinUrl(args: Record<string, unknown>): Promise<string> 
   return JSON.stringify(result, null, 2);
 }
 
+// === Create Chat ===
+
+async function teamsCreateChat(args: Record<string, unknown>): Promise<string> {
+  const start = Date.now();
+  const input = teamsCreateChatSchema.parse(args);
+  const user = input.user || graphClient.getDefaultUser();
+
+  logToolCall('m365_teams_create_chat', { members: input.members });
+
+  const memberEmails = input.members.split(',').map(e => e.trim());
+  const chatType = memberEmails.length > 1 ? 'group' : 'oneOnOne';
+
+  // Build members array with conversation member format
+  const members = memberEmails.map(email => ({
+    '@odata.type': '#microsoft.graph.aadUserConversationMember',
+    roles: ['owner'],
+    'user@odata.bind': `https://graph.microsoft.com/v1.0/users('${email}')`,
+  }));
+
+  // Add the requesting user as owner too
+  if (!memberEmails.includes(user)) {
+    members.push({
+      '@odata.type': '#microsoft.graph.aadUserConversationMember',
+      roles: ['owner'],
+      'user@odata.bind': `https://graph.microsoft.com/v1.0/users('${user}')`,
+    });
+  }
+
+  const chatBody: Record<string, unknown> = {
+    chatType,
+    members,
+  };
+  if (input.topic && chatType === 'group') {
+    chatBody.topic = input.topic;
+  }
+
+  const chat = await graphClient.post<Chat>('/chats', chatBody);
+
+  // Send initial message if provided
+  if (input.message && chat.id) {
+    await graphClient.post(`/chats/${chat.id}/messages`, {
+      body: { content: input.message },
+    });
+  }
+
+  logToolResult('m365_teams_create_chat', true, Date.now() - start);
+  return JSON.stringify({
+    success: true,
+    chatId: chat.id,
+    chatType: chat.chatType,
+    topic: chat.topic,
+    messageSent: !!input.message,
+  }, null, 2);
+}
+
+// === Create Online Meeting ===
+
+async function teamsCreateOnlineMeeting(args: Record<string, unknown>): Promise<string> {
+  const start = Date.now();
+  const input = teamsCreateOnlineMeetingSchema.parse(args);
+  const user = input.user || graphClient.getDefaultUser();
+
+  logToolCall('m365_teams_create_online_meeting', { subject: input.subject });
+
+  const meetingBody: Record<string, unknown> = {
+    subject: input.subject,
+    startDateTime: input.startDateTime,
+    endDateTime: input.endDateTime,
+  };
+
+  if (input.participants) {
+    meetingBody.participants = {
+      attendees: input.participants.split(',').map(email => ({
+        identity: {
+          user: { id: email.trim() },
+        },
+        upn: email.trim(),
+      })),
+    };
+  }
+
+  const meeting = await graphClient.post<OnlineMeeting>(
+    `/users/${user}/onlineMeetings`,
+    meetingBody
+  );
+
+  logToolResult('m365_teams_create_online_meeting', true, Date.now() - start);
+  return JSON.stringify({
+    success: true,
+    id: meeting.id,
+    subject: meeting.subject,
+    start: meeting.startDateTime,
+    end: meeting.endDateTime,
+    joinUrl: meeting.joinWebUrl,
+  }, null, 2);
+}
+
 // === Export ===
 
 export const teamsHandlers: Record<string, ToolHandler> = {
   'm365_teams_chats': teamsChats,
   'm365_teams_messages': teamsMessages,
   'm365_teams_send': teamsSend,
+  'm365_teams_create_chat': teamsCreateChat,
+  'm365_teams_create_online_meeting': teamsCreateOnlineMeeting,
   'm365_meetings_list': meetingsList,
   'm365_meeting_transcripts': meetingTranscripts,
   'm365_meeting_transcript_content': meetingTranscriptContent,
