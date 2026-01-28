@@ -37,6 +37,13 @@ const mailSearchSchema = z.object({
   top: z.number().min(1).max(100).default(10),
 });
 
+const mailReplySchema = z.object({
+  user: z.string().optional(),
+  messageId: z.string(),
+  body: z.string(),
+  replyAll: z.boolean().default(false),
+});
+
 const mailDeleteSchema = z.object({
   user: z.string().optional(),
   messageId: z.string(),
@@ -96,6 +103,20 @@ export const mailTools: Tool[] = [
         top: { type: 'number', description: 'Number of results', default: 10 },
       },
       required: ['query'],
+    },
+  },
+  {
+    name: 'm365_mail_reply',
+    description: 'Reply to an email by message ID',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        user: { type: 'string', description: 'User email (default: configured user)' },
+        messageId: { type: 'string', description: 'ID of the message to reply to' },
+        body: { type: 'string', description: 'Reply body (HTML supported)' },
+        replyAll: { type: 'boolean', description: 'Reply to all recipients (default: false)' },
+      },
+      required: ['messageId', 'body'],
     },
   },
   {
@@ -229,6 +250,26 @@ async function mailSearch(args: Record<string, unknown>): Promise<string> {
   return JSON.stringify(result, null, 2);
 }
 
+async function mailReply(args: Record<string, unknown>): Promise<string> {
+  const start = Date.now();
+  const input = mailReplySchema.parse(args);
+  const user = input.user || graphClient.getDefaultUser();
+  const action = input.replyAll ? 'replyAll' : 'reply';
+
+  logToolCall('m365_mail_reply', { messageId: input.messageId, replyAll: input.replyAll });
+
+  await graphClient.post(
+    `/users/${user}/messages/${input.messageId}/${action}`,
+    {
+      message: {},
+      comment: input.body,
+    }
+  );
+
+  logToolResult('m365_mail_reply', true, Date.now() - start);
+  return JSON.stringify({ success: true, message: 'Reply sent successfully' });
+}
+
 async function mailDelete(args: Record<string, unknown>): Promise<string> {
   const start = Date.now();
   const input = mailDeleteSchema.parse(args);
@@ -248,6 +289,7 @@ export const mailHandlers: Record<string, ToolHandler> = {
   'm365_mail_list': mailList,
   'm365_mail_read': mailRead,
   'm365_mail_send': mailSend,
+  'm365_mail_reply': mailReply,
   'm365_mail_search': mailSearch,
   'm365_mail_delete': mailDelete,
 };
